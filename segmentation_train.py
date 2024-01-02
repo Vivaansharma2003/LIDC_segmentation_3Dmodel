@@ -7,6 +7,9 @@ from separablemodel3D import SeparableUNet3D
 import numpy as np
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from ptflops import get_model_complexity_info 
+import tqdm
+import pandas as pd
+
 def get_lr(optimizer):
     for param_group in optimizer.param_groups:
         return param_group['lr']
@@ -25,7 +28,10 @@ def train_loop_seg(train_loader, val_loader, args):
     val_dcs = []
     best_val = 0.0
     dice = Dice(average='micro',ignore_index=0).to("cuda")
-    for ep in range(args.epochs):
+    log = pd.DataFrame(index=[],columns= ['epoch','loss'])
+
+    pbar=tqdm(total=len(train_loader))
+    for ep in tqdm(range(args.epochs)):
         print("Epoch " + str(ep))
         print("Training")
         model, tr_dc, tr_loss = train_fnc(model, train_loader, optimizer, dice)
@@ -38,6 +44,14 @@ def train_loop_seg(train_loader, val_loader, args):
         print(get_lr(optimizer))
         val_dcs.append(val_dc.cpu().detach().numpy())
         print("val_dc=" + str(val_dc))
+        tmp = pd.Series([
+            ep,
+            tr_loss
+            
+        ], index=['epoch', 'loss'])
+        
+        log = log.append(tmp, ignore_index=True)
+        log.to_csv('model_outputs/log.csv', index=False)
         if val_dc.cpu().detach().numpy() > best_val:
             torch.save({
                 'epoch': ep + 1,
@@ -46,6 +60,8 @@ def train_loop_seg(train_loader, val_loader, args):
             }, str(datestr) + ".model")
             print("Saving new best model ", str(datestr) + ".model")
             best_val = val_dc.cpu().detach().numpy()
+        pbar.update()
+        pbar.close
     plt.subplot(2, 2, 1)
     plt.plot(np.arange(args.epochs), tr_dcs)
     plt.title("Train Dice")
@@ -76,6 +92,7 @@ def train_fnc(train_model, data_loader, optim, dicefnc):
     tr_dc = 0
     tr_loss = 0
     counter = 0
+    pbar=tqdm(total=len(data_loader))
     for i, (x, y_mask) in enumerate(data_loader):
         x, y_mask = x.to("cuda", dtype=torch.float), y_mask.to("cuda", dtype=torch.float)
         if y_mask.max() > 0:
@@ -97,6 +114,7 @@ def train_fnc(train_model, data_loader, optim, dicefnc):
                 dicefnc(pred_seg, y_mask.int()).item()) + "    Loss: " + str(loss.item()))
             tr_dc += dicefnc(pred_seg, y_mask.int())
             counter += 1
+            
 
             del loss
             del x
